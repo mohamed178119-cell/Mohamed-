@@ -19,6 +19,37 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Unpack Zip or Unnest Subdirectories (Auto-Repair Project Structure)
+        run: |
+          echo "Checking directory structure..."
+          # If a zip file was committed directly, extract it
+          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          if [ -n "$ZIP_FILE" ]; then
+            echo "Found zip file: $ZIP_FILE. Extracting..."
+            unzip -o "$ZIP_FILE" -d .
+          fi
+
+          # Find where settings.gradle.kts or settings.gradle is located
+          SETTINGS_PATH=$(find . -name "settings.gradle.kts" -o -name "settings.gradle" | head -n 1)
+          if [ -z "$SETTINGS_PATH" ]; then
+            echo "Searching for build.gradle.kts..."
+            SETTINGS_PATH=$(find . -name "build.gradle.kts" -o -name "build.gradle" | grep -v "/app/" | head -n 1)
+          fi
+
+          if [ -n "$SETTINGS_PATH" ]; then
+            TARGET_DIR=$(dirname "$SETTINGS_PATH")
+            echo "Found Gradle project in: $TARGET_DIR"
+            if [ "$TARGET_DIR" != "." ]; then
+              echo "Moving project files from $TARGET_DIR to root directory..."
+              shopt -s dotglob
+              cp -r "$TARGET_DIR"/* .
+              echo "Files moved to root."
+            fi
+          else
+            echo "Current files in root:"
+            ls -la
+          fi
+
       - name: Set up Java JDK
         uses: actions/setup-java@v4
         with:
@@ -30,29 +61,13 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Locate Project Root & Setup Keystore
+      - name: Prepare Keystore and Permissions
         run: |
-          # Detect if project is at root or inside a subfolder (e.g. from extracted zip)
-          if [ -f "build.gradle.kts" ] || [ -f "build.gradle" ]; then
-            PROJECT_DIR="."
-          else
-            FOUND=$(find . -maxdepth 2 -name "build.gradle.kts" -o -name "build.gradle" | head -n 1)
-            if [ -n "$FOUND" ]; then
-              PROJECT_DIR=$(dirname "$FOUND")
-            else
-              PROJECT_DIR="."
-            fi
-          fi
-          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_ENV
-          echo "Project directory is: $PROJECT_DIR"
-
-          cd "$PROJECT_DIR"
-
           if [ -f debug.keystore.base64 ]; then
             echo "Decoding debug.keystore from base64..."
             base64 -d debug.keystore.base64 > debug.keystore
           elif [ ! -f debug.keystore ]; then
-            echo "Generating fallback debug keystore..."
+            echo "Generating debug keystore..."
             keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
           fi
 
@@ -66,7 +81,6 @@ jobs:
 
       - name: Build Debug APK
         run: |
-          cd "$PROJECT_DIR"
           if [ -f gradlew ]; then
             ./gradlew :app:assembleDebug --stacktrace
           else
@@ -76,18 +90,21 @@ jobs:
       - name: Locate and Collect APK
         run: |
           mkdir -p build-apks
-          APK_PATH=$(find . -name "*.apk" | grep -E "debug|app" | head -n 1)
-          if [ -n "$APK_PATH" ]; then
-            cp "$APK_PATH" build-apks/ConnectCode-MSChat-debug.apk
-            echo "Successfully found and copied APK: $APK_PATH"
+          APK_FILE=$(find . -name "*.apk" | grep -E "debug|app" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find . -name "*.apk" | head -n 1)
+          fi
+          if [ -n "$APK_FILE" ]; then
+            cp "$APK_FILE" build-apks/ConnectCode-MSChat-debug.apk
+            echo "Successfully collected APK from: $APK_FILE"
           else
-            echo "Searching all APK files..."
-            find . -name "*.apk" -exec cp {} build-apks/ConnectCode-MSChat-debug.apk \;
+            echo "Error: No APK file generated!"
+            exit 1
           fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ConnectCode-MSChat-APK
-          path: build-apks/*.apk
+          path: build-apks/ConnectCode-MSChat-debug.apk
           retention-days: 30
