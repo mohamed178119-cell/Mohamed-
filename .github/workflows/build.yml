@@ -12,11 +12,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Unzip project (if uploaded as a zip)
+      - name: List repo root (debug)
+        run: ls -la
+
+      - name: Unzip project (any .zip in repo root)
         run: |
-          if [ -f msa-to-full-mark.zip ]; then
-            unzip -o msa-to-full-mark.zip -d .
+          ZIP_FILE=$(find . -maxdepth 1 -iname "*.zip" | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No zip file found in repo root. Files present:"
+            ls -la
+            exit 1
           fi
+          echo "Found zip: $ZIP_FILE"
+          unzip -o "$ZIP_FILE" -d .
+          echo "After unzip:"
+          ls -la
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
